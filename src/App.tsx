@@ -124,7 +124,7 @@ function getLevelConfig(level: number): LevelConfig {
         bgPaths: LEVEL3_BG_PATHS,
         bgPlacements: LEVEL3_BG_PLACEMENTS,
         obstacles: LEVEL3_OBSTACLES,
-        enemy: null,
+        enemy: LEVEL3_ENEMY,
         bgColor: LEVEL3_BG_COLOR || "#3498db",
         floorColor: LEVEL3_FLOOR_COLOR || "#8b4513",
         obstacleSprites: LEVEL3_OBSTACLE_SPRITES,
@@ -205,7 +205,7 @@ const MarioGame: React.FC = () => {
     const [assets, setAssets] = useState<Assets | null>(null);
     const [loaded, setLoaded] = useState(false);
 
-    const [level, setLevel] = useState<number>(1);
+    const [level, setLevel] = useState<number>(3);
     const [levelComplete, setLevelComplete] = useState<boolean>(false);
 
     const player = useRef<Player>({
