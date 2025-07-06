@@ -4,15 +4,15 @@ import {
     PLAYER_Y_OFFSET, PLAYER_SPEED, GRAVITY, JUMP_SPEED, SPRING_JUMP_SPEED,
     WATER_SLOWDOWN, FLOOR_3D_OFFSET, LEVEL_LENGTHS
 } from "./config/globalConfig";
-
 import {
     LEVEL1_BG_PATHS, LEVEL1_BG_PLACEMENTS, LEVEL1_OBSTACLES, LEVEL1_ENEMY, LEVEL1_OBSTACLE_SPRITES
 } from "./config/level1Config";
 import {
-    LEVEL2_BG_PATHS, LEVEL2_BG_PLACEMENTS, LEVEL2_OBSTACLES, LEVEL2_ENEMY
+    LEVEL2_BG_PATHS, LEVEL2_BG_PLACEMENTS, LEVEL2_OBSTACLES, LEVEL2_ENEMY, LEVEL2_OBSTACLE_SPRITES
 } from "./config/level2Config";
 import {
-    LEVEL3_BG_PATHS, LEVEL3_BG_PLACEMENTS, LEVEL3_OBSTACLES, LEVEL3_ENEMY
+    LEVEL3_BG_PATHS, LEVEL3_BG_PLACEMENTS, LEVEL3_OBSTACLES, LEVEL3_ENEMY,
+    LEVEL3_BG_COLOR, LEVEL3_FLOOR_COLOR, LEVEL3_OBSTACLE_SPRITES
 } from "./config/level3Config";
 
 const PLAYER_WALK_PATHS = [
@@ -34,13 +34,11 @@ const PLAYER_JUMP_PATHS = [
 const PLAYER_CROUCH_PATHS = [
     "sprites/player/crouch/crouch1.png",
 ];
-const ENEMY_PATH = "sprites/enemies/level1/enemy1.png"; // You can use per-level if needed
 const FIGHT_PATHS = [
     "sprites/fight/fight1.png",
     "sprites/fight/fight2.png",
     "sprites/fight/fight3.png"
 ];
-
 
 type PlayerState = "idle" | "walk" | "jump" | "crouch";
 interface Player {
@@ -70,6 +68,7 @@ interface EnemyConfig {
     y: number;
     w: number;
     h: number;
+    imgPath?: string;
 }
 interface Enemy extends EnemyConfig {
     img: HTMLImageElement;
@@ -80,23 +79,32 @@ interface Assets {
     jump: HTMLImageElement[];
     crouch: HTMLImageElement[];
     obstacleSprites: Record<string, HTMLImageElement[]>;
-    enemy: HTMLImageElement;
+    enemy?: HTMLImageElement;
     fight: HTMLImageElement[];
 }
 interface LevelConfig {
     bgPaths: string[];
     bgPlacements: [number, number, number, number][];
     obstacles: ObstacleConfig[];
-    enemy: EnemyConfig;
+    enemy: EnemyConfig | null;
+    bgColor: string;
+    floorColor: string;
+    obstacleSprites: Record<string, string[]>;
+    transitionVideo?: string;
 }
 
+// ---------- Level Config ----------
 function getLevelConfig(level: number): LevelConfig {
     if (level === 1) {
         return {
             bgPaths: LEVEL1_BG_PATHS,
             bgPlacements: LEVEL1_BG_PLACEMENTS,
             obstacles: LEVEL1_OBSTACLES,
-            enemy: LEVEL1_ENEMY,
+            enemy: { ...LEVEL1_ENEMY, imgPath: "sprites/enemies/level1/enemy1.png" },
+            bgColor: "#e8d2b0",
+            floorColor: "#643200",
+            obstacleSprites: LEVEL1_OBSTACLE_SPRITES,
+            transitionVideo: "/level1to2.mp4"
         };
     }
     if (level === 2) {
@@ -104,18 +112,24 @@ function getLevelConfig(level: number): LevelConfig {
             bgPaths: LEVEL2_BG_PATHS,
             bgPlacements: LEVEL2_BG_PLACEMENTS,
             obstacles: LEVEL2_OBSTACLES,
-            enemy: LEVEL2_ENEMY,
+            enemy: LEVEL2_ENEMY, // should have imgPath!
+            bgColor: "#eeeeee",
+            floorColor: "#333333",
+            obstacleSprites: LEVEL2_OBSTACLE_SPRITES,
+            transitionVideo: "/level2to3.mp4"
         };
     }
-    if (level === 3) {
-        return {
-            bgPaths: LEVEL3_BG_PATHS,
-            bgPlacements: LEVEL3_BG_PLACEMENTS,
-            obstacles: LEVEL3_OBSTACLES,
-            enemy: LEVEL3_ENEMY,
-        };
-    }
-    return getLevelConfig(1);
+    // Level 3, blue background, brown floor, empty
+    return {
+        bgPaths: LEVEL3_BG_PATHS,
+        bgPlacements: LEVEL3_BG_PLACEMENTS,
+        obstacles: LEVEL3_OBSTACLES,
+        enemy: null,
+        bgColor: LEVEL3_BG_COLOR || "#3498db",
+        floorColor: LEVEL3_FLOOR_COLOR || "#8b4513",
+        obstacleSprites: LEVEL3_OBSTACLE_SPRITES,
+        transitionVideo: undefined
+    };
 }
 
 async function loadImages(paths: string[]): Promise<HTMLImageElement[]> {
@@ -185,6 +199,7 @@ function pixelCollision(
 const MarioGame: React.FC = () => {
     const [showIntro, setShowIntro] = useState(true);
     const [showLevelTransition, setShowLevelTransition] = useState(false);
+    const [pendingTransition, setPendingTransition] = useState<string | null>(null);
 
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const [assets, setAssets] = useState<Assets | null>(null);
@@ -241,18 +256,21 @@ const MarioGame: React.FC = () => {
     // --- LOAD ASSETS ---
     useEffect(() => {
         (async () => {
+            setLoaded(false);
             const levelConfig = getLevelConfig(level);
             const bgObjs = await loadImages(levelConfig.bgPaths);
             const walk = await loadImages(PLAYER_WALK_PATHS);
             const jump = await loadImages(PLAYER_JUMP_PATHS);
             const crouch = await loadImages(PLAYER_CROUCH_PATHS);
-            const obstacleSprites = await loadObstacleSprites(LEVEL1_OBSTACLE_SPRITES);
-            const [enemyImg] = await loadImages([ENEMY_PATH]);
+            const obstacleSprites = await loadObstacleSprites(levelConfig.obstacleSprites);
+            let enemyImg: HTMLImageElement | undefined;
+            if (levelConfig.enemy && levelConfig.enemy.imgPath) {
+                [enemyImg] = await loadImages([levelConfig.enemy.imgPath]);
+            }
             const fight = await loadImages(FIGHT_PATHS);
             setAssets({ bgObjs, walk, jump, crouch, obstacleSprites, enemy: enemyImg, fight });
             setLoaded(true);
         })();
-        // Note: only re-run when `level` changes
     }, [level]);
 
     // --- OBSTACLES/ENEMY PLACEMENT ---
@@ -270,11 +288,8 @@ const MarioGame: React.FC = () => {
             }
         }
         obstacles.current = obs;
-        if (!enemyDefeated) {
-            enemy.current = {
-                ...enemyCfg,
-                img: assets.enemy
-            };
+        if (enemyCfg && assets.enemy && !enemyDefeated) {
+            enemy.current = { ...enemyCfg, img: assets.enemy };
         } else {
             enemy.current = null;
         }
@@ -283,12 +298,8 @@ const MarioGame: React.FC = () => {
     // --- KEYBOARD HANDLERS ---
     useEffect(() => {
         if (showIntro || showLevelTransition) return;
-        const down = (e: KeyboardEvent) => {
-            keys.current[e.code] = true;
-        };
-        const up = (e: KeyboardEvent) => {
-            keys.current[e.code] = false;
-        };
+        const down = (e: KeyboardEvent) => { keys.current[e.code] = true; };
+        const up = (e: KeyboardEvent) => { keys.current[e.code] = false; };
         window.addEventListener("keydown", down);
         window.addEventListener("keyup", up);
         return () => {
@@ -321,11 +332,22 @@ const MarioGame: React.FC = () => {
         return () => window.removeEventListener("keydown", onKeyDown);
     }, [fightState.inBattle, fightState.fighting, showIntro, showLevelTransition]);
 
-    // --- GAME LOOP ---
+    useEffect(() => {
+        if (
+            level === 2 && !fightState.fighting && !fightState.inBattle && enemyDefeated && !showLevelTransition &&
+            !pendingTransition
+        ) {
+            setLevelComplete(true);
+            const transition = getLevelConfig(level).transitionVideo;
+            if (transition) setPendingTransition(transition);
+            setTimeout(() => setShowLevelTransition(true), 500);
+        }
+    }, [fightState, enemyDefeated, level, showLevelTransition, pendingTransition]);
+    // --- GAME LOOP (unchanged) ---
     useEffect(() => {
         if (!loaded || !assets || showIntro || showLevelTransition) return;
         const { bgObjs, walk, jump, crouch, fight } = assets;
-        const { bgPlacements } = getLevelConfig(level);
+        const { bgPlacements, bgColor, floorColor } = getLevelConfig(level);
         const LEVEL_LENGTH = LEVEL_LENGTHS[level];
 
         let running = true;
@@ -339,22 +361,11 @@ const MarioGame: React.FC = () => {
             if (!running || !canvasRef.current) return;
             const ctx = canvasRef.current.getContext("2d")!;
 
-            // --- LEVEL 2/3 / fallback ---
-            if (level >= 2) {
-                ctx.fillStyle = "#b8eaff";
-                ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
-                ctx.fillStyle = "#3e6939";
-                ctx.fillRect(0, GROUND_Y, GAME_WIDTH, GAME_HEIGHT - GROUND_Y);
-                ctx.fillStyle = "#222";
-                ctx.font = "48px Arial";
-                ctx.fillText(`Level ${level}!`, GAME_WIDTH / 2 - 110, 130);
-                requestAnimationFrame(frameLoop);
-                return;
-            }
-
-            // --- LEVEL 1 ---
-            ctx.fillStyle = "#e8d2b0";
+            // Background and floor
+            ctx.fillStyle = bgColor;
             ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+            ctx.fillStyle = floorColor;
+            ctx.fillRect(0, GROUND_Y, GAME_WIDTH, GAME_HEIGHT - GROUND_Y);
 
             const p = player.current;
             let camX = Math.max(0, Math.min(p.x - GAME_WIDTH / 2 + PLAYER_WIDTH / 2, LEVEL_LENGTH - GAME_WIDTH));
@@ -366,9 +377,6 @@ const MarioGame: React.FC = () => {
                     ctx.drawImage(img, objX, y, w, h);
                 }
             });
-
-            ctx.fillStyle = "#643200";
-            ctx.fillRect(0, GROUND_Y, GAME_WIDTH, GAME_HEIGHT - GROUND_Y);
 
             for (const obs of obstacles.current) {
                 ctx.drawImage(obs.img, obs.x - camX, obs.y, obs.w, obs.h);
@@ -511,12 +519,12 @@ const MarioGame: React.FC = () => {
                 setFightState((s) => ({ ...s, inBattle: true }));
             }
 
-            // --- LEVEL COMPLETE & TRANSITION VIDEO ---
+            // --- LEVEL COMPLETE ---
             if (!levelComplete && p.x + PLAYER_WIDTH >= LEVEL_LENGTH - 10) {
                 setLevelComplete(true);
-                setTimeout(() => {
-                    setShowLevelTransition(true);
-                }, 1000); // short pause before transition video
+                const transition = getLevelConfig(level).transitionVideo;
+                if (transition) setPendingTransition(transition);
+                setTimeout(() => setShowLevelTransition(true), 500);
                 return;
             }
 
@@ -597,6 +605,82 @@ const MarioGame: React.FC = () => {
         return () => { running = false; };
     }, [loaded, assets, fightState, enemyDefeated, level, levelComplete, showIntro, showLevelTransition]);
 
+    // --- Transition after Level 2 fight ---
+    useEffect(() => {
+        if (
+            level === 2 &&
+            fightState.fighting === false &&
+            fightState.inBattle === false &&
+            enemyDefeated &&
+            !showLevelTransition &&
+            !pendingTransition
+        ) {
+            setLevelComplete(true);
+        }
+    }, [fightState, enemyDefeated, level, showLevelTransition, pendingTransition]);
+
+    // --- TRANSITION VIDEO ---
+    if (showLevelTransition && pendingTransition) {
+        return (
+            <div style={{
+                width: "100vw",
+                height: "100vh",
+                background: "#111",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                position: "fixed",
+                top: 0,
+                left: 0,
+                zIndex: 2000
+            }}>
+                <video
+                    src={process.env.PUBLIC_URL + pendingTransition}
+                    width="100%"
+                    height="100%"
+                    autoPlay
+                    onEnded={() => {
+                        setShowLevelTransition(false);
+                        setLevel(level + 1);
+                        setLevelComplete(false);
+                        setEnemyDefeated(false);
+                        setPendingTransition(null);
+                    }}
+                    style={{
+                        borderRadius: 12,
+                        background: "#000",
+                        maxWidth: 900,
+                        maxHeight: 540,
+                    }}
+                />
+                <button
+                    style={{
+                        position: "absolute",
+                        bottom: "50px",
+                        padding: "8px 32px",
+                        fontSize: 22,
+                        borderRadius: 12,
+                        marginTop: 12,
+                        background: "#e8d2b0",
+                        border: "none",
+                        cursor: "pointer",
+                        fontWeight: "bold"
+                    }}
+                    onClick={() => {
+                        setShowLevelTransition(false);
+                        setLevel(level + 1);
+                        setLevelComplete(false);
+                        setEnemyDefeated(false);
+                        setPendingTransition(null);
+                    }}
+                >
+                    Skip
+                </button>
+            </div>
+        );
+    }
+
     // --- INTRO VIDEO ---
     if (showIntro) {
         return (
@@ -638,65 +722,7 @@ const MarioGame: React.FC = () => {
         );
     }
 
-    // --- LEVEL TRANSITION VIDEO (after Level 1, before Level 2) ---
-    if (showLevelTransition) {
-        return (
-            <div style={{
-                width: "100vw",
-                height: "100vh",
-                background: "#111",
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                position: "fixed",
-                top: 0,
-                left: 0,
-                zIndex: 2000
-            }}>
-                <video
-                    src={process.env.PUBLIC_URL + "/level1to2.mp4"}
-                    width={"100%"}
-                    height={"100%"}
-                    autoPlay
-                    onEnded={() => {
-                        setShowLevelTransition(false);
-                        setLevel(level + 1);
-                        setLevelComplete(false);
-                    }}
-                    style={{
-                        borderRadius: 12,
-                        background: "#000",
-                        maxWidth: 900,
-                        maxHeight: 540,
-                    }}
-                />
-                <button
-                    style={{
-                        position: "absolute",
-                        bottom: "50px",
-                        padding: "8px 32px",
-                        fontSize: 22,
-                        borderRadius: 12,
-                        marginTop: 12,
-                        background: "#e8d2b0",
-                        border: "none",
-                        cursor: "pointer",
-                        fontWeight: "bold"
-                    }}
-                    onClick={() => {
-                        setShowLevelTransition(false);
-                        setLevel(level + 1);
-                        setLevelComplete(false);
-                    }}
-                >
-                    Skip
-                </button>
-            </div>
-        );
-    }
-
-    // --- GAME ---
+    // --- GAME UI ---
     return (
         <div style={{
             display: "flex",

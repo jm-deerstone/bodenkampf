@@ -1,8 +1,19 @@
 import { GROUND_Y, FLOOR_3D_OFFSET, LEVEL_LENGTHS } from "./globalConfig";
 
 export const LEVEL2_BG_PATHS = [
-    "sprites/background/level2/bg1.png",
-    "sprites/background/level2/bg2.png"
+    "sprites/background/level2/fenster1.png",
+    "sprites/background/level2/fenster2.png",
+    "sprites/background/level2/fenster3.png",
+    "sprites/background/level2/fenster4.png",
+    "sprites/background/level2/fenster5.png",
+    "sprites/background/level2/fenster6.png",
+    "sprites/background/level2/table1.png",
+    "sprites/background/level2/table2.png",
+    "sprites/background/level2/table3.png",
+    "sprites/background/level2/table4.png",
+    "sprites/background/level2/table5.png",
+    "sprites/background/level2/table6.png",
+    "sprites/background/level2/tafel1.png"
 ];
 
 export const LEVEL2_BG_PLACEMENTS: [number, number, number, number][] = [
@@ -11,15 +22,30 @@ export const LEVEL2_BG_PLACEMENTS: [number, number, number, number][] = [
 ];
 
 export const LEVEL2_OBSTACLES = [
-    { type: "spring",   x: 380,  y: GROUND_Y - 22 + FLOOR_3D_OFFSET,   w: 40,  h: 28 },
-    { type: "water",    x: 600,  y: GROUND_Y - 80 + FLOOR_3D_OFFSET,   w: 120, h: 120 },
-    { type: "spike",    x: 950,  y: GROUND_Y - 50 + FLOOR_3D_OFFSET,   w: 100, h: 80 },
-    { type: "rotating", x: 1250, y: GROUND_Y - 70 + FLOOR_3D_OFFSET,   w: 120, h: 100 }
+    { type: "spike",    x: 100,  y: GROUND_Y - 50 + FLOOR_3D_OFFSET,   w: 100, h: 80 },
+    { type: "spike",    x: 300,  y: GROUND_Y - 50 + FLOOR_3D_OFFSET,   w: 100, h: 80 },
+    { type: "spike",    x: 500,  y: GROUND_Y - 50 + FLOOR_3D_OFFSET,   w: 100, h: 80 },
+    { type: "spike",    x: 700,  y: GROUND_Y - 50 + FLOOR_3D_OFFSET,   w: 100, h: 80 },
 ];
+
+export const LEVEL2_OBSTACLE_SPRITES: Record<string, string[]> = {
+    spike: [
+        "sprites/obstacles/level2/spikes/spikes1.png",
+        "sprites/obstacles/level2/spikes/spikes2.png",
+        "sprites/obstacles/level2/spikes/spikes3.png",
+        "sprites/obstacles/level2/spikes/spikes4.png",
+    ],
+};
 
 export const LEVEL2_ENEMY = {
     x: LEVEL_LENGTHS[2] - 100,
     y: GROUND_Y - 100 + FLOOR_3D_OFFSET,
     w: 100,
-    h: 120
+    h: 120,
+    imgPath: "sprites/enemies/level2/enemy1.png"  // Make sure this exists!
 };
+
+
+
+export const LEVEL2_BG_COLOR = "#eeeeee";       // light grey
+export const LEVEL2_FLOOR_COLOR = "#333333";    // dark grey
