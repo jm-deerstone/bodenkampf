@@ -1,26 +1,619 @@
-import React from 'react';
-import logo from './logo.svg';
-import './App.css';
+import React, { useEffect, useRef, useState } from "react";
 
-function App() {
-  return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.tsx</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
-    </div>
-  );
+const WIDTH = 800;
+const HEIGHT = 480;
+const GROUND_Y = HEIGHT - 60;
+const PLAYER_WIDTH = Math.floor(40 * 1.3);
+const PLAYER_HEIGHT = Math.floor(60 * 1.4);
+const PLAYER_SPEED = 5;
+const GRAVITY = 0.5;
+const JUMP_SPEED = -11;
+const SPRING_JUMP_SPEED = -18;
+const WATER_SLOWDOWN = 2;
+const FLOOR_3D_OFFSET = 25;
+
+const LEVEL_LENGTH = WIDTH * 3;
+
+const LEVEL1_BG_PATHS = [
+    "sprites/background/level1/1plant.png",
+    "sprites/background/level1/2schrankgroß.png",
+    "sprites/background/level1/3guitar.png",
+    "sprites/background/level1/4drawing.png",
+    "sprites/background/level1/5lamp.png",
+    "sprites/background/level1/6window.png",
+    "sprites/background/level1/7schrank.png",
+    "sprites/background/level1/8vinyl.png"
+];
+const LEVEL1_BG_PLACEMENTS: [number, number, number, number][] = [
+    [80, 340, 80, 80],
+    [190, 300, 120, 120],
+    [350, 350, 40, 70],
+    [420, 280, 70, 70],
+    [550, 360, 60, 60],
+    [650, 260, 130, 130],
+    [750, 350, 50, 70],
+    [840, 360, 60, 60],
+];
+
+const PLAYER_WALK_PATHS = [
+    "sprites/player/walk/walk1.png",
+    "sprites/player/walk/walk2.png",
+    "sprites/player/walk/walk3.png",
+    "sprites/player/walk/walk4.png",
+    "sprites/player/walk/walk5.png",
+    "sprites/player/walk/walk6.png",
+];
+const PLAYER_JUMP_PATHS = [
+    "sprites/player/jump/jump1.png",
+    "sprites/player/jump/jump2.png",
+    "sprites/player/jump/jump3.png",
+    "sprites/player/jump/jump4.png",
+    "sprites/player/jump/jump5.png",
+    "sprites/player/jump/jump6.png",
+];
+const PLAYER_CROUCH_PATHS = [
+    "sprites/player/crouch/crouch1.png",
+];
+const ENEMY_PATH = "sprites/enemies/level1/enemy1.png";
+const FIGHT_PATHS = [
+    "sprites/fight/fight1.png",
+    "sprites/fight/fight2.png",
+    "sprites/fight/fight3.png"
+];
+
+const LEVEL1_OBSTACLE_SPRITES: Record<string, string[]> = {
+    spikes: [
+        "sprites/obstacles/level1/spikes/spike1.png",
+    ],
+    springs: [
+        "sprites/obstacles/level1/spring/spring1.png",
+    ],
+    rotating: [
+        "sprites/obstacles/level1/rotating/rotating1.png"
+    ],
+    water: [
+        "sprites/obstacles/level1/water/water1.png"
+    ]
+};
+
+async function loadImages(paths: string[]): Promise<HTMLImageElement[]> {
+    return Promise.all(
+        paths.map(
+            (path) =>
+                new Promise<HTMLImageElement>((resolve, reject) => {
+                    const img = new window.Image();
+                    img.src = process.env.PUBLIC_URL + "/" + path;
+                    img.onload = () => resolve(img);
+                    img.onerror = (e) => {
+                        console.error("Failed to load image: " + img.src, e);
+                        reject(e);
+                    };
+                })
+        )
+    );
 }
 
-export default App;
+async function loadObstacleSprites(
+    registry: Record<string, string[]>
+): Promise<Record<string, HTMLImageElement[]>> {
+    const loaded: Record<string, HTMLImageElement[]> = {};
+    for (const typ in registry) {
+        loaded[typ] = await loadImages(registry[typ]);
+    }
+    return loaded;
+}
+
+type PlayerState = "idle" | "walk" | "jump" | "crouch";
+interface Player {
+    x: number;
+    y: number;
+    vy: number;
+    state: PlayerState;
+    facing: "left" | "right";
+    frame: number;
+    animTimer: number;
+    jumpFrame: number;
+    jumpAnimTimer: number;
+}
+interface Obstacle {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    type: string;
+    img: HTMLImageElement;
+}
+interface Enemy {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    img: HTMLImageElement;
+}
+
+// Get image pixel data at a given width/height
+function getImageData(img: HTMLImageElement, w: number, h: number): ImageData {
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    const ctx = c.getContext("2d")!;
+    ctx.drawImage(img, 0, 0, w, h);
+    return ctx.getImageData(0, 0, w, h);
+}
+
+// Per-pixel collision detection between two sprites at given positions/sizes
+// Returns true if there is any pixel overlap with alpha > threshold for both
+function pixelCollision(
+    spriteA: { img: HTMLImageElement, x: number, y: number, w: number, h: number, data?: ImageData },
+    spriteB: { img: HTMLImageElement, x: number, y: number, w: number, h: number, data?: ImageData },
+    alphaThreshold = 10
+): boolean {
+    // Calculate intersection rectangle
+    const xMin = Math.max(spriteA.x, spriteB.x);
+    const yMin = Math.max(spriteA.y, spriteB.y);
+    const xMax = Math.min(spriteA.x + spriteA.w, spriteB.x + spriteB.w);
+    const yMax = Math.min(spriteA.y + spriteA.h, spriteB.y + spriteB.h);
+
+    if (xMin >= xMax || yMin >= yMax) return false; // no overlap
+
+    // Get pixel data (cache for performance)
+    if (!spriteA.data) spriteA.data = getImageData(spriteA.img, spriteA.w, spriteA.h);
+    if (!spriteB.data) spriteB.data = getImageData(spriteB.img, spriteB.w, spriteB.h);
+
+    // Loop over intersection area
+    for (let y = yMin; y < yMax; y++) {
+        for (let x = xMin; x < xMax; x++) {
+            const ax = Math.floor(x - spriteA.x);
+            const ay = Math.floor(y - spriteA.y);
+            const bx = Math.floor(x - spriteB.x);
+            const by = Math.floor(y - spriteB.y);
+
+            const aIdx = (ay * spriteA.w + ax) * 4 + 3; // alpha channel
+            const bIdx = (by * spriteB.w + bx) * 4 + 3;
+
+            const aAlpha = spriteA.data.data[aIdx];
+            const bAlpha = spriteB.data.data[bIdx];
+
+            if (aAlpha > alphaThreshold && bAlpha > alphaThreshold) {
+                return true; // both pixels visible
+            }
+        }
+    }
+    return false;
+}
+
+const MarioLevel1: React.FC = () => {
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    const [assets, setAssets] = useState<{
+        bgObjs: HTMLImageElement[];
+        walk: HTMLImageElement[];
+        jump: HTMLImageElement[];
+        crouch: HTMLImageElement[];
+        obstacleSprites: Record<string, HTMLImageElement[]>;
+        enemy: HTMLImageElement;
+        fight: HTMLImageElement[];
+    } | null>(null);
+    const [loaded, setLoaded] = useState(false);
+
+    // Game state refs
+    const player = useRef<Player>({
+        x: 50,
+        y: GROUND_Y - PLAYER_HEIGHT + FLOOR_3D_OFFSET,
+        vy: 0,
+        state: "idle",
+        facing: "right",
+        frame: 0,
+        animTimer: 0,
+        jumpFrame: 0,
+        jumpAnimTimer: 0,
+    });
+    const keys = useRef<{ [key: string]: boolean }>({});
+    const obstacles = useRef<Obstacle[]>([]);
+    const enemy = useRef<Enemy | null>(null);
+
+    // Fight state
+    const [fightState, setFightState] = useState<{
+        inBattle: boolean,
+        fighting: boolean,
+        startTime: number,
+        frame: number
+    }>({ inBattle: false, fighting: false, startTime: 0, frame: 0 });
+
+    // Setup: load all assets
+    useEffect(() => {
+        (async () => {
+            const bgObjs = await loadImages(LEVEL1_BG_PATHS);
+            const walk = await loadImages(PLAYER_WALK_PATHS);
+            const jump = await loadImages(PLAYER_JUMP_PATHS);
+            const crouch = await loadImages(PLAYER_CROUCH_PATHS);
+            const obstacleSprites = await loadObstacleSprites(LEVEL1_OBSTACLE_SPRITES);
+            const [enemyImg] = await loadImages([ENEMY_PATH]);
+            const fight = await loadImages(FIGHT_PATHS);
+            setAssets({ bgObjs, walk, jump, crouch, obstacleSprites, enemy: enemyImg, fight });
+            setLoaded(true);
+        })();
+    }, []);
+
+    // Place obstacles and enemy
+    useEffect(() => {
+        if (!loaded || !assets) return;
+        const obs: Obstacle[] = [];
+        if (assets.obstacleSprites.spikes && assets.obstacleSprites.spikes.length) {
+            obs.push({
+                x: 340,
+                y: GROUND_Y - 50 + FLOOR_3D_OFFSET,
+                w: 100,
+                h: 80,
+                type: "spike",
+                img: assets.obstacleSprites.spikes[0],
+            });
+        }
+        if (assets.obstacleSprites.springs && assets.obstacleSprites.springs.length) {
+            obs.push({
+                x: 720,
+                y: GROUND_Y - 22 + FLOOR_3D_OFFSET,
+                w: 40,
+                h: 28,
+                type: "spring",
+                img: assets.obstacleSprites.springs[0],
+            });
+        }
+        if (assets.obstacleSprites.rotating && assets.obstacleSprites.rotating.length) {
+            obs.push({
+                x: 1000,
+                y: GROUND_Y - 70 + FLOOR_3D_OFFSET,
+                w: 100,
+                h: 100,
+                type: "rotating",
+                img: assets.obstacleSprites.rotating[0],
+            });
+        }
+        if (assets.obstacleSprites.water && assets.obstacleSprites.water.length) {
+            // Place water right after spring, big and tall!
+            obs.push({
+                x: 770, // right after spring
+                y: GROUND_Y - 80 + FLOOR_3D_OFFSET,
+                w: 120,
+                h: 120, // big height for effect
+                type: "water",
+                img: assets.obstacleSprites.water[0],
+            });
+        }
+        obstacles.current = obs;
+        // Enemy (elmar) at end of level
+        enemy.current = {
+            x: LEVEL_LENGTH - 120,
+            y: GROUND_Y - 60 + FLOOR_3D_OFFSET,
+            w: 66,
+            h: 90,
+            img: assets.enemy
+        };
+    }, [loaded, assets]);
+
+    // Keyboard listeners
+    useEffect(() => {
+        const down = (e: KeyboardEvent) => {
+            keys.current[e.code] = true;
+        };
+        const up = (e: KeyboardEvent) => {
+            keys.current[e.code] = false;
+        };
+        window.addEventListener("keydown", down);
+        window.addEventListener("keyup", up);
+        return () => {
+            window.removeEventListener("keydown", down);
+            window.removeEventListener("keyup", up);
+        };
+    }, []);
+
+    // Fight state keyboard listeners
+    useEffect(() => {
+        if (!fightState.inBattle || fightState.fighting) return;
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.code === "KeyF") {
+                setFightState({
+                    inBattle: true,
+                    fighting: true,
+                    startTime: performance.now(),
+                    frame: 0
+                });
+            }
+            if (e.code === "KeyR") {
+                // "run": teleport player to start and end battle
+                player.current.x = 50;
+                player.current.y = GROUND_Y - PLAYER_HEIGHT + FLOOR_3D_OFFSET;
+                player.current.vy = 0;
+                setFightState({ inBattle: false, fighting: false, startTime: 0, frame: 0 });
+            }
+        };
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [fightState.inBattle, fightState.fighting]);
+
+    useEffect(() => {
+        if (!loaded || !assets) return;
+        const { bgObjs, walk, jump, crouch, fight } = assets;
+        let running = true;
+
+        // Cache ImageData for all obstacle sprites
+        obstacles.current.forEach(obs => {
+            if (!('data' in obs)) {
+                // @ts-ignore
+                obs.data = getImageData(obs.img, obs.w, obs.h);
+            }
+        });
+
+        function frameLoop(now: number) {
+            if (!running || !canvasRef.current) return;
+            const ctx = canvasRef.current.getContext("2d")!;
+            ctx.fillStyle = "#e8d2b0";
+            ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+            // Camera
+            const p = player.current;
+            let camX = Math.max(0, Math.min(p.x - WIDTH / 2 + PLAYER_WIDTH / 2, LEVEL_LENGTH - WIDTH));
+
+            // Draw background
+            bgObjs.forEach((img, i) => {
+                if (i < LEVEL1_BG_PLACEMENTS.length) {
+                    const [x, y, w, h] = LEVEL1_BG_PLACEMENTS[i];
+                    const objX = x - camX * 0.7;
+                    ctx.drawImage(img, objX, y, w, h);
+                }
+            });
+
+            // Floor
+            ctx.fillStyle = "#643200";
+            ctx.fillRect(0, GROUND_Y, WIDTH, HEIGHT - GROUND_Y);
+
+            // Draw obstacles
+            for (const obs of obstacles.current) {
+                ctx.drawImage(obs.img, obs.x - camX, obs.y, obs.w, obs.h);
+            }
+
+            // Draw enemy (unless in fight)
+            if (enemy.current && !fightState.fighting) {
+                ctx.drawImage(
+                    enemy.current.img,
+                    enemy.current.x - camX,
+                    enemy.current.y,
+                    enemy.current.w,
+                    enemy.current.h
+                );
+            }
+
+            // FIGHT ANIMATION
+            if (fightState.fighting) {
+                const FIGHT_DURATION = 2000;
+                const elapsed = now - fightState.startTime;
+                const framesCount = fight.length;
+                const frame = Math.floor((elapsed / FIGHT_DURATION) * (framesCount * 4)) % framesCount;
+                ctx.drawImage(
+                    fight[frame],
+                    (p.x - camX) - 40, // center between player & enemy
+                    p.y - 20,
+                    180,
+                    140
+                );
+                if (elapsed > FIGHT_DURATION) {
+                    setFightState({
+                        inBattle: false,
+                        fighting: false,
+                        startTime: 0,
+                        frame: 0
+                    });
+                }
+                requestAnimationFrame(frameLoop);
+                return;
+            }
+
+            // --- PLAYER CONTROLS AND PHYSICS ---
+            let effectiveSpeed = PLAYER_SPEED;
+
+            // Water effect (pixel collision below!)
+            let onWater = false;
+
+            // --- Pixel Collision Checks ---
+            if (!fightState.inBattle && !fightState.fighting) {
+                // Build player sprite for pixel test
+                let playerImg: HTMLImageElement;
+                if (p.state === "walk") {
+                    playerImg = walk[p.frame];
+                } else if (p.state === "jump") {
+                    playerImg = jump[p.jumpFrame];
+                } else if (p.state === "crouch") {
+                    playerImg = crouch[0];
+                } else {
+                    playerImg = walk[0];
+                }
+                // Player's actual canvas coordinates
+                const drawX = p.x;
+                const drawY = p.y;
+                // Player collision sprite
+                const playerSprite = {
+                    img: playerImg,
+                    x: drawX,
+                    y: drawY,
+                    w: PLAYER_WIDTH,
+                    h: (p.state === "crouch") ? PLAYER_HEIGHT * 0.5 : PLAYER_HEIGHT,
+                    data: undefined as ImageData | undefined,
+                };
+                // For crouch, shift y down to match drawn image
+                if (p.state === "crouch") {
+                    playerSprite.y = p.y + PLAYER_HEIGHT * 0.5;
+                }
+
+                for (const obs of obstacles.current) {
+                    // Bounding box pre-check
+                    if (
+                        playerSprite.x + playerSprite.w > obs.x &&
+                        playerSprite.x < obs.x + obs.w &&
+                        playerSprite.y + playerSprite.h > obs.y &&
+                        playerSprite.y < obs.y + obs.h
+                    ) {
+                        // pixel-perfect collision check
+                        // @ts-ignore
+                        if (pixelCollision(playerSprite, obs, 10)) {
+                            if (obs.type === "spike" || obs.type === "rotating") {
+                                p.x = 50;
+                                p.y = GROUND_Y - PLAYER_HEIGHT + FLOOR_3D_OFFSET;
+                                p.vy = 0;
+                                break;
+                            }
+                            if (obs.type === "spring" && p.vy >= 0 && p.y + PLAYER_HEIGHT - p.vy <= obs.y) {
+                                p.y = obs.y - PLAYER_HEIGHT;
+                                p.vy = SPRING_JUMP_SPEED;
+                                p.state = "jump";
+                                break;
+                            }
+                            if (obs.type === "water") {
+                                onWater = true;
+                                // Don't break; player could also be touching another obstacle
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (onWater) effectiveSpeed = Math.max(1, PLAYER_SPEED / WATER_SLOWDOWN);
+
+            // Battle state disables normal movement
+            if (!fightState.inBattle && !fightState.fighting) {
+                if (keys.current["ArrowLeft"]) {
+                    p.x = Math.max(0, p.x - effectiveSpeed);
+                    p.facing = "left";
+                    if (p.state !== "jump") p.state = "walk";
+                } else if (keys.current["ArrowRight"]) {
+                    p.x = Math.min(LEVEL_LENGTH - PLAYER_WIDTH, p.x + effectiveSpeed);
+                    p.facing = "right";
+                    if (p.state !== "jump") p.state = "walk";
+                } else if (p.state !== "jump") {
+                    p.state = "idle";
+                }
+                if (keys.current["ArrowDown"] && p.state !== "jump") {
+                    p.state = "crouch";
+                }
+                if (keys.current["Space"] && p.state !== "jump" && p.y >= GROUND_Y - PLAYER_HEIGHT + FLOOR_3D_OFFSET) {
+                    p.vy = JUMP_SPEED;
+                    p.state = "jump";
+                }
+            }
+
+            // Gravity
+            if (!fightState.inBattle && !fightState.fighting) {
+                p.y += p.vy;
+                p.vy += GRAVITY;
+            }
+
+            // Floor collision
+            if (p.y >= GROUND_Y - PLAYER_HEIGHT + FLOOR_3D_OFFSET) {
+                p.y = GROUND_Y - PLAYER_HEIGHT + FLOOR_3D_OFFSET;
+                p.vy = 0;
+                if (p.state === "jump") {
+                    p.state = keys.current["ArrowLeft"] || keys.current["ArrowRight"] ? "walk" : "idle";
+                }
+            }
+
+            // ENEMY COLLISION (start fight) -- bounding box is okay for this
+            if (
+                enemy.current && !fightState.inBattle && !fightState.fighting &&
+                p.x + PLAYER_WIDTH > enemy.current.x &&
+                p.x < enemy.current.x + enemy.current.w &&
+                p.y + PLAYER_HEIGHT > enemy.current.y &&
+                p.y < enemy.current.y + enemy.current.h
+            ) {
+                setFightState((s) => ({ ...s, inBattle: true }));
+            }
+
+            // --- Animation (no change from your last version) ---
+            let img: HTMLImageElement = walk[0];
+            if (p.state === "walk") {
+                if (now - p.animTimer > 120) {
+                    p.frame = (p.frame + 1) % walk.length;
+                    p.animTimer = now;
+                }
+                img = walk[p.frame];
+            } else if (p.state === "jump") {
+                if (now - p.jumpAnimTimer > 80) {
+                    p.jumpFrame = (p.jumpFrame + 1) % jump.length;
+                    p.jumpAnimTimer = now;
+                }
+                img = jump[p.jumpFrame];
+            } else if (p.state === "crouch") {
+                img = crouch[0];
+            } else {
+                img = walk[0];
+            }
+
+            const drawX = p.x - camX;
+            if (p.state === "crouch") {
+                ctx.save();
+                ctx.scale(p.facing === "left" ? -1 : 1, 1);
+                ctx.drawImage(
+                    img,
+                    (p.facing === "left" ? -drawX - PLAYER_WIDTH : drawX),
+                    p.y + PLAYER_HEIGHT * 0.5,
+                    PLAYER_WIDTH,
+                    PLAYER_HEIGHT * 0.5
+                );
+                ctx.restore();
+            } else if (p.facing === "left") {
+                ctx.save();
+                ctx.scale(-1, 1);
+                ctx.drawImage(
+                    img,
+                    -drawX - PLAYER_WIDTH,
+                    p.y,
+                    PLAYER_WIDTH,
+                    PLAYER_HEIGHT
+                );
+                ctx.restore();
+            } else {
+                ctx.drawImage(img, drawX, p.y, PLAYER_WIDTH, PLAYER_HEIGHT);
+            }
+
+            // Debug/instructions
+            ctx.fillStyle = "#fff";
+            ctx.font = "20px Arial";
+            if (fightState.inBattle && !fightState.fighting) {
+                ctx.fillText(
+                    "Elmar blockiert! [F] Kämpfen  [R] Fliehen",
+                    WIDTH / 2 - 140,
+                    HEIGHT / 2 - 10
+                );
+            } else {
+                ctx.fillText(
+                    `State: ${p.state}  |  X: ${Math.round(p.x)}  Y: ${Math.round(p.y)}${onWater ? " | SLOW (water)" : ""}`,
+                    20,
+                    40
+                );
+            }
+
+            requestAnimationFrame(frameLoop);
+        }
+
+        requestAnimationFrame(frameLoop);
+        return () => { running = false; };
+    }, [loaded, assets, fightState]);
+
+    return (
+        <div>
+            <h2>Mario Level 1 – Apartment Obstacles, 3D, Enemy & Fight!</h2>
+            <canvas
+                ref={canvasRef}
+                width={WIDTH}
+                height={HEIGHT}
+                style={{ border: "3px solid #222", background: "#e8d2b0" }}
+                tabIndex={0}
+            />
+            <p>
+                ← → to move, ↓ to crouch, Space to jump.<br />
+                Touch spring to jump high, touch water to slow, spikes/rotating = restart.<br />
+                Elmar: [F] to fight, [R] to run.
+            </p>
+            {!loaded && <div>Loading sprites...</div>}
+        </div>
+    );
+};
+
+export default MarioLevel1;
