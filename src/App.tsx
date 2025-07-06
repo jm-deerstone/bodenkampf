@@ -234,7 +234,7 @@ const MarioGame: React.FC = () => {
     // --- RESET GAME STATE WHEN SHOWINTRO TURNS FALSE ---
     useEffect(() => {
         if (!showIntro) {
-            setLevel(1);
+            //setLevel(1);
             setLevelComplete(false);
             setEnemyDefeated(false);
             setFightState({ inBattle: false, fighting: false, startTime: 0, frame: 0 });
@@ -255,6 +255,18 @@ const MarioGame: React.FC = () => {
 
     // --- LOAD ASSETS ---
     useEffect(() => {
+        player.current = {
+            x: 50,
+            y: GROUND_Y - PLAYER_HEIGHT + FLOOR_3D_OFFSET + PLAYER_Y_OFFSET,
+            vy: 0,
+            state: "idle",
+            facing: "right",
+            frame: 0,
+            animTimer: 0,
+            jumpFrame: 0,
+            jumpAnimTimer: 0,
+        };
+        keys.current = {};
         (async () => {
             setLoaded(false);
             const levelConfig = getLevelConfig(level);
