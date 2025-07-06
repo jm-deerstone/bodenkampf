@@ -1,40 +1,20 @@
 import React, { useEffect, useRef, useState } from "react";
+import {
+    GAME_WIDTH, GAME_HEIGHT, GROUND_Y, PLAYER_WIDTH, PLAYER_HEIGHT,
+    PLAYER_Y_OFFSET, PLAYER_SPEED, GRAVITY, JUMP_SPEED, SPRING_JUMP_SPEED,
+    WATER_SLOWDOWN, FLOOR_3D_OFFSET, LEVEL_LENGTHS
+} from "./config/globalConfig";
 
-// --- constants and utils (unchanged) ---
-const WIDTH = 800;
-const HEIGHT = 480;
-const GROUND_Y = HEIGHT - 60;
-const PLAYER_WIDTH = Math.floor(40 * 1.3);
-const PLAYER_HEIGHT = Math.floor(60 * 1.4);
-const PLAYER_Y_OFFSET = 20;
-const PLAYER_SPEED = 5;
-const GRAVITY = 0.5;
-const JUMP_SPEED = -11;
-const SPRING_JUMP_SPEED = -18;
-const WATER_SLOWDOWN = 2;
-const FLOOR_3D_OFFSET = 25;
-const LEVEL_LENGTH = WIDTH * 2;
+import {
+    LEVEL1_BG_PATHS, LEVEL1_BG_PLACEMENTS, LEVEL1_OBSTACLES, LEVEL1_ENEMY, LEVEL1_OBSTACLE_SPRITES
+} from "./config/level1Config";
+import {
+    LEVEL2_BG_PATHS, LEVEL2_BG_PLACEMENTS, LEVEL2_OBSTACLES, LEVEL2_ENEMY
+} from "./config/level2Config";
+import {
+    LEVEL3_BG_PATHS, LEVEL3_BG_PLACEMENTS, LEVEL3_OBSTACLES, LEVEL3_ENEMY
+} from "./config/level3Config";
 
-const LEVEL1_BG_PATHS = [
-    "sprites/background/level1/1plant.png",
-    "sprites/background/level1/2schrankgroß.png",
-    "sprites/background/level1/3guitar.png",
-    "sprites/background/level1/4drawing.png",
-    "sprites/background/level1/5lamp.png",
-    "sprites/background/level1/6window.png",
-    "sprites/background/level1/7schrank.png",
-    "sprites/background/level1/8vinyl.png"
-];
-const LEVEL1_BG_PLACEMENTS: [number, number, number, number][] = [
-    [80, 340, 80, 80],
-    [190, 300, 120, 120],
-    [350, 350, 40, 70],
-    [420, 280, 70, 70],
-    [550, 360, 60, 60],
-    [650, 260, 130, 130],
-    [750, 350, 50, 70],
-    [840, 360, 60, 60],
-];
 const PLAYER_WALK_PATHS = [
     "sprites/player/walk/walk1.png",
     "sprites/player/walk/walk2.png",
@@ -54,26 +34,89 @@ const PLAYER_JUMP_PATHS = [
 const PLAYER_CROUCH_PATHS = [
     "sprites/player/crouch/crouch1.png",
 ];
-const ENEMY_PATH = "sprites/enemies/level1/enemy1.png";
+const ENEMY_PATH = "sprites/enemies/level1/enemy1.png"; // You can use per-level if needed
 const FIGHT_PATHS = [
     "sprites/fight/fight1.png",
     "sprites/fight/fight2.png",
     "sprites/fight/fight3.png"
 ];
-const LEVEL1_OBSTACLE_SPRITES: Record<string, string[]> = {
-    spikes: [
-        "sprites/obstacles/level1/spikes/spike1.png",
-    ],
-    springs: [
-        "sprites/obstacles/level1/spring/spring1.png",
-    ],
-    rotating: [
-        "sprites/obstacles/level1/rotating/rotating1.png"
-    ],
-    water: [
-        "sprites/obstacles/level1/water/water1.png"
-    ]
-};
+
+
+type PlayerState = "idle" | "walk" | "jump" | "crouch";
+interface Player {
+    x: number;
+    y: number;
+    vy: number;
+    state: PlayerState;
+    facing: "left" | "right";
+    frame: number;
+    animTimer: number;
+    jumpFrame: number;
+    jumpAnimTimer: number;
+}
+interface ObstacleConfig {
+    type: string;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+}
+interface Obstacle extends ObstacleConfig {
+    img: HTMLImageElement;
+    data?: ImageData;
+}
+interface EnemyConfig {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+}
+interface Enemy extends EnemyConfig {
+    img: HTMLImageElement;
+}
+interface Assets {
+    bgObjs: HTMLImageElement[];
+    walk: HTMLImageElement[];
+    jump: HTMLImageElement[];
+    crouch: HTMLImageElement[];
+    obstacleSprites: Record<string, HTMLImageElement[]>;
+    enemy: HTMLImageElement;
+    fight: HTMLImageElement[];
+}
+interface LevelConfig {
+    bgPaths: string[];
+    bgPlacements: [number, number, number, number][];
+    obstacles: ObstacleConfig[];
+    enemy: EnemyConfig;
+}
+
+function getLevelConfig(level: number): LevelConfig {
+    if (level === 1) {
+        return {
+            bgPaths: LEVEL1_BG_PATHS,
+            bgPlacements: LEVEL1_BG_PLACEMENTS,
+            obstacles: LEVEL1_OBSTACLES,
+            enemy: LEVEL1_ENEMY,
+        };
+    }
+    if (level === 2) {
+        return {
+            bgPaths: LEVEL2_BG_PATHS,
+            bgPlacements: LEVEL2_BG_PLACEMENTS,
+            obstacles: LEVEL2_OBSTACLES,
+            enemy: LEVEL2_ENEMY,
+        };
+    }
+    if (level === 3) {
+        return {
+            bgPaths: LEVEL3_BG_PATHS,
+            bgPlacements: LEVEL3_BG_PLACEMENTS,
+            obstacles: LEVEL3_OBSTACLES,
+            enemy: LEVEL3_ENEMY,
+        };
+    }
+    return getLevelConfig(1);
+}
 
 async function loadImages(paths: string[]): Promise<HTMLImageElement[]> {
     return Promise.all(
@@ -99,44 +142,6 @@ async function loadObstacleSprites(
         loaded[typ] = await loadImages(registry[typ]);
     }
     return loaded;
-}
-
-type PlayerState = "idle" | "walk" | "jump" | "crouch";
-interface Player {
-    x: number;
-    y: number;
-    vy: number;
-    state: PlayerState;
-    facing: "left" | "right";
-    frame: number;
-    animTimer: number;
-    jumpFrame: number;
-    jumpAnimTimer: number;
-}
-interface Obstacle {
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-    type: string;
-    img: HTMLImageElement;
-    data?: ImageData;
-}
-interface Enemy {
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-    img: HTMLImageElement;
-}
-interface Assets {
-    bgObjs: HTMLImageElement[];
-    walk: HTMLImageElement[];
-    jump: HTMLImageElement[];
-    crouch: HTMLImageElement[];
-    obstacleSprites: Record<string, HTMLImageElement[]>;
-    enemy: HTMLImageElement;
-    fight: HTMLImageElement[];
 }
 function getImageData(img: HTMLImageElement, w: number, h: number): ImageData {
     const c = document.createElement("canvas");
@@ -177,7 +182,7 @@ function pixelCollision(
 }
 
 // ------------------- MAIN COMPONENT -------------------
-const MarioLevel1: React.FC = () => {
+const MarioGame: React.FC = () => {
     const [showIntro, setShowIntro] = useState(true);
     const [showLevelTransition, setShowLevelTransition] = useState(false);
 
@@ -185,11 +190,9 @@ const MarioLevel1: React.FC = () => {
     const [assets, setAssets] = useState<Assets | null>(null);
     const [loaded, setLoaded] = useState(false);
 
-    // Level control
     const [level, setLevel] = useState<number>(1);
     const [levelComplete, setLevelComplete] = useState<boolean>(false);
 
-    // Game state refs
     const player = useRef<Player>({
         x: 50,
         y: GROUND_Y - PLAYER_HEIGHT + FLOOR_3D_OFFSET + PLAYER_Y_OFFSET,
@@ -238,7 +241,8 @@ const MarioLevel1: React.FC = () => {
     // --- LOAD ASSETS ---
     useEffect(() => {
         (async () => {
-            const bgObjs = await loadImages(LEVEL1_BG_PATHS);
+            const levelConfig = getLevelConfig(level);
+            const bgObjs = await loadImages(levelConfig.bgPaths);
             const walk = await loadImages(PLAYER_WALK_PATHS);
             const jump = await loadImages(PLAYER_JUMP_PATHS);
             const crouch = await loadImages(PLAYER_CROUCH_PATHS);
@@ -248,59 +252,27 @@ const MarioLevel1: React.FC = () => {
             setAssets({ bgObjs, walk, jump, crouch, obstacleSprites, enemy: enemyImg, fight });
             setLoaded(true);
         })();
-    }, []);
+        // Note: only re-run when `level` changes
+    }, [level]);
 
     // --- OBSTACLES/ENEMY PLACEMENT ---
     useEffect(() => {
-        if (!loaded || !assets || level !== 1) return;
+        if (!loaded || !assets) return;
+        const { obstacles: obsCfg, enemy: enemyCfg } = getLevelConfig(level);
         const obs: Obstacle[] = [];
-        if (assets.obstacleSprites.spikes?.length) {
-            obs.push({
-                x: 340,
-                y: GROUND_Y - 50 + FLOOR_3D_OFFSET,
-                w: 100,
-                h: 80,
-                type: "spike",
-                img: assets.obstacleSprites.spikes[0],
-            });
-        }
-        if (assets.obstacleSprites.springs?.length) {
-            obs.push({
-                x: 720,
-                y: GROUND_Y - 22 + FLOOR_3D_OFFSET,
-                w: 40,
-                h: 28,
-                type: "spring",
-                img: assets.obstacleSprites.springs[0],
-            });
-        }
-        if (assets.obstacleSprites.rotating?.length) {
-            obs.push({
-                x: 1000,
-                y: GROUND_Y - 70 + FLOOR_3D_OFFSET,
-                w: 100,
-                h: 100,
-                type: "rotating",
-                img: assets.obstacleSprites.rotating[0],
-            });
-        }
-        if (assets.obstacleSprites.water?.length) {
-            obs.push({
-                x: 770,
-                y: GROUND_Y - 80 + FLOOR_3D_OFFSET,
-                w: 120,
-                h: 120,
-                type: "water",
-                img: assets.obstacleSprites.water[0],
-            });
+        for (const o of obsCfg) {
+            const spriteArr = assets.obstacleSprites[o.type];
+            if (spriteArr?.length) {
+                obs.push({
+                    ...o,
+                    img: spriteArr[0],
+                });
+            }
         }
         obstacles.current = obs;
         if (!enemyDefeated) {
             enemy.current = {
-                x: LEVEL_LENGTH - 120,
-                y: GROUND_Y - 90 + FLOOR_3D_OFFSET,
-                w: 90,
-                h: 115,
+                ...enemyCfg,
                 img: assets.enemy
             };
         } else {
@@ -353,6 +325,9 @@ const MarioLevel1: React.FC = () => {
     useEffect(() => {
         if (!loaded || !assets || showIntro || showLevelTransition) return;
         const { bgObjs, walk, jump, crouch, fight } = assets;
+        const { bgPlacements } = getLevelConfig(level);
+        const LEVEL_LENGTH = LEVEL_LENGTHS[level];
+
         let running = true;
         obstacles.current.forEach(obs => {
             if (!obs.data) {
@@ -364,36 +339,36 @@ const MarioLevel1: React.FC = () => {
             if (!running || !canvasRef.current) return;
             const ctx = canvasRef.current.getContext("2d")!;
 
-            // --- LEVEL 2 ---
-            if (level === 2) {
+            // --- LEVEL 2/3 / fallback ---
+            if (level >= 2) {
                 ctx.fillStyle = "#b8eaff";
-                ctx.fillRect(0, 0, WIDTH, HEIGHT);
+                ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
                 ctx.fillStyle = "#3e6939";
-                ctx.fillRect(0, GROUND_Y, WIDTH, HEIGHT - GROUND_Y);
+                ctx.fillRect(0, GROUND_Y, GAME_WIDTH, GAME_HEIGHT - GROUND_Y);
                 ctx.fillStyle = "#222";
                 ctx.font = "48px Arial";
-                ctx.fillText("Level 2!", WIDTH / 2 - 110, 130);
+                ctx.fillText(`Level ${level}!`, GAME_WIDTH / 2 - 110, 130);
                 requestAnimationFrame(frameLoop);
                 return;
             }
 
             // --- LEVEL 1 ---
             ctx.fillStyle = "#e8d2b0";
-            ctx.fillRect(0, 0, WIDTH, HEIGHT);
+            ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
             const p = player.current;
-            let camX = Math.max(0, Math.min(p.x - WIDTH / 2 + PLAYER_WIDTH / 2, LEVEL_LENGTH - WIDTH));
+            let camX = Math.max(0, Math.min(p.x - GAME_WIDTH / 2 + PLAYER_WIDTH / 2, LEVEL_LENGTH - GAME_WIDTH));
 
             bgObjs.forEach((img, i) => {
-                if (i < LEVEL1_BG_PLACEMENTS.length) {
-                    const [x, y, w, h] = LEVEL1_BG_PLACEMENTS[i];
+                if (i < bgPlacements.length) {
+                    const [x, y, w, h] = bgPlacements[i];
                     const objX = x - camX * 0.7;
                     ctx.drawImage(img, objX, y, w, h);
                 }
             });
 
             ctx.fillStyle = "#643200";
-            ctx.fillRect(0, GROUND_Y, WIDTH, HEIGHT - GROUND_Y);
+            ctx.fillRect(0, GROUND_Y, GAME_WIDTH, GAME_HEIGHT - GROUND_Y);
 
             for (const obs of obstacles.current) {
                 ctx.drawImage(obs.img, obs.x - camX, obs.y, obs.w, obs.h);
@@ -597,15 +572,15 @@ const MarioLevel1: React.FC = () => {
             ctx.font = "20px Arial";
             if (levelComplete) {
                 ctx.fillStyle = "rgba(255,255,255,0.9)";
-                ctx.fillRect(0, 0, WIDTH, HEIGHT);
+                ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
                 ctx.fillStyle = "#222";
                 ctx.font = "48px Arial";
-                ctx.fillText("LEVEL COMPLETE!", WIDTH / 2 - 200, HEIGHT / 2);
+                ctx.fillText("LEVEL COMPLETE!", GAME_WIDTH / 2 - 200, GAME_HEIGHT / 2);
             } else if (fightState.inBattle && !fightState.fighting) {
                 ctx.fillText(
                     "Elmar blockiert! [F] Kämpfen  [R] Fliehen",
-                    WIDTH / 2 - 140,
-                    HEIGHT / 2 - 10
+                    GAME_WIDTH / 2 - 140,
+                    GAME_HEIGHT / 2 - 10
                 );
             } else {
                 ctx.fillText(
@@ -686,7 +661,7 @@ const MarioLevel1: React.FC = () => {
                     autoPlay
                     onEnded={() => {
                         setShowLevelTransition(false);
-                        setLevel(2);
+                        setLevel(level + 1);
                         setLevelComplete(false);
                     }}
                     style={{
@@ -711,7 +686,7 @@ const MarioLevel1: React.FC = () => {
                     }}
                     onClick={() => {
                         setShowLevelTransition(false);
-                        setLevel(2);
+                        setLevel(level + 1);
                         setLevelComplete(false);
                     }}
                 >
@@ -732,11 +707,11 @@ const MarioLevel1: React.FC = () => {
             backgroundColor: "rgb(0,0,0)"
         }}>
             <div>
-                <h2 style={{ color: "white" }}>Mario Level 1 – Apartment Obstacles, 3D, Enemy & Fight!</h2>
+                <h2 style={{ color: "white" }}>Mario Level {level} – Configurable!</h2>
                 <canvas
                     ref={canvasRef}
-                    width={WIDTH}
-                    height={HEIGHT}
+                    width={GAME_WIDTH}
+                    height={GAME_HEIGHT}
                     style={{ border: "3px solid #222", background: "#e8d2b0" }}
                     tabIndex={0}
                 />
@@ -751,4 +726,4 @@ const MarioLevel1: React.FC = () => {
     );
 };
 
-export default MarioLevel1;
+export default MarioGame;
