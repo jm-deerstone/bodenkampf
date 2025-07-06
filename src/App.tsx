@@ -11,9 +11,29 @@ import {
     LEVEL2_BG_PATHS, LEVEL2_BG_PLACEMENTS, LEVEL2_OBSTACLES, LEVEL2_ENEMY, LEVEL2_OBSTACLE_SPRITES
 } from "./config/level2Config";
 import {
-    LEVEL3_BG_PATHS, LEVEL3_BG_PLACEMENTS, LEVEL3_OBSTACLES, LEVEL3_ENEMY,
-    LEVEL3_BG_COLOR, LEVEL3_FLOOR_COLOR, LEVEL3_OBSTACLE_SPRITES
+    LEVEL3_BG_PATHS, LEVEL3_BG_PLACEMENTS, LEVEL3_OBSTACLES, LEVEL3_BG_COLOR,
+    LEVEL3_FLOOR_COLOR, LEVEL3_OBSTACLE_SPRITES
 } from "./config/level3Config";
+
+// === ENEMY CONFIG FOR LEVEL 3 ===
+const LEVEL3_ENEMIES = [
+    {
+        x: 1400,
+        y: GROUND_Y - 90 + FLOOR_3D_OFFSET,
+        w: 100,
+        h: 110,
+        imgPath: "sprites/enemies/level3/enemy1.png",
+        id: "enemy1"
+    },
+    {
+        x: 2200,
+        y: GROUND_Y - 90 + FLOOR_3D_OFFSET,
+        w: 100,
+        h: 110,
+        imgPath: "sprites/enemies/level3/enemy2.png",
+        id: "enemy2"
+    }
+];
 
 const PLAYER_WALK_PATHS = [
     "sprites/player/walk/walk1.png",
@@ -69,6 +89,7 @@ interface EnemyConfig {
     w: number;
     h: number;
     imgPath?: string;
+    id?: string;
 }
 interface Enemy extends EnemyConfig {
     img: HTMLImageElement;
@@ -79,6 +100,7 @@ interface Assets {
     jump: HTMLImageElement[];
     crouch: HTMLImageElement[];
     obstacleSprites: Record<string, HTMLImageElement[]>;
+    enemyImgs?: HTMLImageElement[]; // For multi-enemy
     enemy?: HTMLImageElement;
     fight: HTMLImageElement[];
 }
@@ -86,14 +108,14 @@ interface LevelConfig {
     bgPaths: string[];
     bgPlacements: [number, number, number, number][];
     obstacles: ObstacleConfig[];
-    enemy: EnemyConfig | null;
+    enemies?: EnemyConfig[]; // For level 3+
+    enemy?: EnemyConfig | null; // For legacy levels 1,2
     bgColor: string;
     floorColor: string;
     obstacleSprites: Record<string, string[]>;
     transitionVideo?: string;
 }
 
-// ---------- Level Config ----------
 function getLevelConfig(level: number): LevelConfig {
     if (level === 1) {
         return {
@@ -119,12 +141,12 @@ function getLevelConfig(level: number): LevelConfig {
             transitionVideo: "/level2to3.mp4"
         };
     }
-    // Level 3, blue background, brown floor, empty
+    // Level 3 with multiple enemies
     return {
         bgPaths: LEVEL3_BG_PATHS,
         bgPlacements: LEVEL3_BG_PLACEMENTS,
         obstacles: LEVEL3_OBSTACLES,
-        enemy: LEVEL3_ENEMY,
+        enemies: LEVEL3_ENEMIES,
         bgColor: LEVEL3_BG_COLOR || "#3498db",
         floorColor: LEVEL3_FLOOR_COLOR || "#8b4513",
         obstacleSprites: LEVEL3_OBSTACLE_SPRITES,
@@ -200,12 +222,13 @@ const MarioGame: React.FC = () => {
     const [showIntro, setShowIntro] = useState(true);
     const [showLevelTransition, setShowLevelTransition] = useState(false);
     const [pendingTransition, setPendingTransition] = useState<string | null>(null);
+    const [showLost, setShowLost] = useState(false);
 
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const [assets, setAssets] = useState<Assets | null>(null);
     const [loaded, setLoaded] = useState(false);
 
-    const [level, setLevel] = useState<number>(3);
+    const [level, setLevel] = useState<number>(1);
     const [levelComplete, setLevelComplete] = useState<boolean>(false);
 
     const player = useRef<Player>({
@@ -221,22 +244,25 @@ const MarioGame: React.FC = () => {
     });
     const keys = useRef<{ [key: string]: boolean }>({});
     const obstacles = useRef<Obstacle[]>([]);
-    const enemy = useRef<Enemy | null>(null);
+    // Track enemies for level 3
+    const [enemyStates, setEnemyStates] = useState<{ [id: string]: "alive" | "defeated" | "escaped" }>({});
+    // Track legacy enemy defeated state for level 1/2
+    const [legacyEnemyDefeated, setLegacyEnemyDefeated] = useState(false); // <<<
 
-    const [enemyDefeated, setEnemyDefeated] = useState<boolean>(false);
     const [fightState, setFightState] = useState<{
         inBattle: boolean,
         fighting: boolean,
         startTime: number,
-        frame: number
+        frame: number,
+        enemyId?: string,
+        enemyIdx?: number
     }>({ inBattle: false, fighting: false, startTime: 0, frame: 0 });
 
     // --- RESET GAME STATE WHEN SHOWINTRO TURNS FALSE ---
     useEffect(() => {
         if (!showIntro) {
-            //setLevel(1);
             setLevelComplete(false);
-            setEnemyDefeated(false);
+            setShowLost(false);
             setFightState({ inBattle: false, fighting: false, startTime: 0, frame: 0 });
             player.current = {
                 x: 50,
@@ -252,6 +278,11 @@ const MarioGame: React.FC = () => {
             keys.current = {};
         }
     }, [showIntro]);
+
+    // --- RESET LEGACY ENEMY ON LEVEL CHANGE/INTRO ---
+    useEffect(() => {
+        setLegacyEnemyDefeated(false); // <<<
+    }, [level, showIntro]);
 
     // --- LOAD ASSETS ---
     useEffect(() => {
@@ -275,20 +306,35 @@ const MarioGame: React.FC = () => {
             const jump = await loadImages(PLAYER_JUMP_PATHS);
             const crouch = await loadImages(PLAYER_CROUCH_PATHS);
             const obstacleSprites = await loadObstacleSprites(levelConfig.obstacleSprites);
+
+            let enemyImgs: HTMLImageElement[] = [];
+            if (levelConfig.enemies && levelConfig.enemies.length) {
+                enemyImgs = await loadImages(levelConfig.enemies.map(e => e.imgPath!));
+            }
             let enemyImg: HTMLImageElement | undefined;
             if (levelConfig.enemy && levelConfig.enemy.imgPath) {
                 [enemyImg] = await loadImages([levelConfig.enemy.imgPath]);
             }
             const fight = await loadImages(FIGHT_PATHS);
-            setAssets({ bgObjs, walk, jump, crouch, obstacleSprites, enemy: enemyImg, fight });
+            setAssets({ bgObjs, walk, jump, crouch, obstacleSprites, enemyImgs, enemy: enemyImg, fight });
             setLoaded(true);
         })();
+    }, [level]);
+
+    // --- INIT ENEMY STATES FOR LEVEL 3 ---
+    useEffect(() => {
+        if (level === 3) {
+            setEnemyStates({
+                enemy1: "alive",
+                enemy2: "alive"
+            });
+        }
     }, [level]);
 
     // --- OBSTACLES/ENEMY PLACEMENT ---
     useEffect(() => {
         if (!loaded || !assets) return;
-        const { obstacles: obsCfg, enemy: enemyCfg } = getLevelConfig(level);
+        const { obstacles: obsCfg } = getLevelConfig(level);
         const obs: Obstacle[] = [];
         for (const o of obsCfg) {
             const spriteArr = assets.obstacleSprites[o.type];
@@ -300,16 +346,11 @@ const MarioGame: React.FC = () => {
             }
         }
         obstacles.current = obs;
-        if (enemyCfg && assets.enemy && !enemyDefeated) {
-            enemy.current = { ...enemyCfg, img: assets.enemy };
-        } else {
-            enemy.current = null;
-        }
-    }, [loaded, assets, enemyDefeated, level]);
+    }, [loaded, assets, level]);
 
     // --- KEYBOARD HANDLERS ---
     useEffect(() => {
-        if (showIntro || showLevelTransition) return;
+        if (showIntro || showLevelTransition || showLost) return;
         const down = (e: KeyboardEvent) => { keys.current[e.code] = true; };
         const up = (e: KeyboardEvent) => { keys.current[e.code] = false; };
         window.addEventListener("keydown", down);
@@ -318,48 +359,45 @@ const MarioGame: React.FC = () => {
             window.removeEventListener("keydown", down);
             window.removeEventListener("keyup", up);
         };
-    }, [showIntro, showLevelTransition]);
+    }, [showIntro, showLevelTransition, showLost]);
 
     // --- FIGHT KEY HANDLER ---
     useEffect(() => {
-        if (showIntro || showLevelTransition) return;
+        if (showIntro || showLevelTransition || showLost) return;
         if (!fightState.inBattle || fightState.fighting) return;
         const onKeyDown = (e: KeyboardEvent) => {
-            if (e.code === "KeyF") {
-                setFightState({
-                    inBattle: true,
-                    fighting: true,
-                    startTime: performance.now(),
-                    frame: 0
-                });
-            }
             if (e.code === "KeyR") {
-                player.current.x = 50;
-                player.current.y = GROUND_Y - PLAYER_HEIGHT + FLOOR_3D_OFFSET + PLAYER_Y_OFFSET;
-                player.current.vy = 0;
+                // For enemy2: escaping is the only way to win
+                if (fightState.enemyId === "enemy2") {
+                    setEnemyStates(prev => ({ ...prev, enemy2: "escaped" }));
+                } else if (fightState.enemyId) {
+                    // @ts-ignore
+                    setEnemyStates(prev => ({ ...prev, [fightState.enemyId]: "escaped" }));
+                }
                 setFightState({ inBattle: false, fighting: false, startTime: 0, frame: 0 });
+            }
+            if (e.code === "KeyF") {
+                if (fightState.enemyId === "enemy2") {
+                    setShowLost(true);
+                } else {
+                    setFightState({
+                        ...fightState,
+                        fighting: true,
+                        startTime: performance.now(),
+                        frame: 0
+                    });
+                }
             }
         };
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
-    }, [fightState.inBattle, fightState.fighting, showIntro, showLevelTransition]);
+    }, [fightState.inBattle, fightState.fighting, fightState.enemyId, showIntro, showLevelTransition, showLost]);
 
+    // --- GAME LOOP ---
     useEffect(() => {
-        if (
-            level === 2 && !fightState.fighting && !fightState.inBattle && enemyDefeated && !showLevelTransition &&
-            !pendingTransition
-        ) {
-            setLevelComplete(true);
-            const transition = getLevelConfig(level).transitionVideo;
-            if (transition) setPendingTransition(transition);
-            setTimeout(() => setShowLevelTransition(true), 500);
-        }
-    }, [fightState, enemyDefeated, level, showLevelTransition, pendingTransition]);
-    // --- GAME LOOP (unchanged) ---
-    useEffect(() => {
-        if (!loaded || !assets || showIntro || showLevelTransition) return;
-        const { bgObjs, walk, jump, crouch, fight } = assets;
-        const { bgPlacements, bgColor, floorColor } = getLevelConfig(level);
+        if (!loaded || !assets || showIntro || showLevelTransition || showLost) return;
+        const { bgObjs, walk, jump, crouch, fight, enemyImgs, enemy } = assets;
+        const { bgPlacements, bgColor, floorColor, enemies } = getLevelConfig(level);
         const LEVEL_LENGTH = LEVEL_LENGTHS[level];
 
         let running = true;
@@ -394,14 +432,32 @@ const MarioGame: React.FC = () => {
                 ctx.drawImage(obs.img, obs.x - camX, obs.y, obs.w, obs.h);
             }
 
-            if (enemy.current && !fightState.fighting) {
-                ctx.drawImage(
-                    enemy.current.img,
-                    enemy.current.x - camX,
-                    enemy.current.y,
-                    enemy.current.w,
-                    enemy.current.h
-                );
+            // MULTIPLE ENEMIES FOR LEVEL 3
+            if (level === 3 && enemies && enemyImgs) {
+                enemies.forEach((enemyCfg, idx) => {
+                    if (enemyStates[enemyCfg.id!] === "alive") {
+                        ctx.drawImage(
+                            enemyImgs[idx],
+                            enemyCfg.x - camX,
+                            enemyCfg.y,
+                            enemyCfg.w,
+                            enemyCfg.h
+                        );
+                    }
+                });
+            }
+            // LEGACY SINGLE ENEMY (ONLY DRAW IF NOT DEFEATED) <<<
+            else if (level < 3 && enemy && !fightState.fighting && enemy && !legacyEnemyDefeated) {
+                const enemyCfg = getLevelConfig(level).enemy;
+                if (enemyCfg) {
+                    ctx.drawImage(
+                        enemy,
+                        enemyCfg.x - camX,
+                        enemyCfg.y,
+                        enemyCfg.w,
+                        enemyCfg.h
+                    );
+                }
             }
 
             // --- Fight Animation: Centered above player ---
@@ -424,7 +480,17 @@ const MarioGame: React.FC = () => {
                         startTime: 0,
                         frame: 0
                     });
-                    setEnemyDefeated(true);
+                    if (fightState.enemyId) {
+                        // If legacy, set as defeated
+                        if (fightState.enemyId === "legacy") {
+                            setLegacyEnemyDefeated(true);
+                        } else {
+                            setEnemyStates(prev => ({
+                                ...prev,
+                                [fightState.enemyId!]: "defeated"
+                            }));
+                        }
+                    }
                 }
                 requestAnimationFrame(frameLoop);
                 return;
@@ -458,7 +524,6 @@ const MarioGame: React.FC = () => {
                         playerSprite.y + playerSprite.h > obs.y &&
                         playerSprite.y < obs.y + obs.h
                     ) {
-                        // SPRING COLLISION
                         if (obs.type === "spring") {
                             const playerFeetY = p.y + PLAYER_HEIGHT;
                             const prevPlayerFeetY = p.y + PLAYER_HEIGHT - p.vy;
@@ -520,19 +585,48 @@ const MarioGame: React.FC = () => {
                 }
             }
 
-            // ENEMY COLLISION (start fight) -- only if not defeated
-            if (
-                enemy.current && !enemyDefeated && !fightState.inBattle && !fightState.fighting &&
-                p.x + PLAYER_WIDTH > enemy.current.x &&
-                p.x < enemy.current.x + enemy.current.w &&
-                p.y + PLAYER_HEIGHT > enemy.current.y &&
-                p.y < enemy.current.y + enemy.current.h
-            ) {
-                setFightState((s) => ({ ...s, inBattle: true }));
+            // MULTI-ENEMY COLLISION FOR LEVEL 3
+            if (level === 3 && enemies && enemyImgs) {
+                for (let i = 0; i < enemies.length; ++i) {
+                    const enemyCfg = enemies[i];
+                    if (enemyStates[enemyCfg.id!] === "alive" &&
+                        p.x + PLAYER_WIDTH > enemyCfg.x &&
+                        p.x < enemyCfg.x + enemyCfg.w &&
+                        p.y + PLAYER_HEIGHT > enemyCfg.y &&
+                        p.y < enemyCfg.y + enemyCfg.h
+                    ) {
+                        setFightState((s) => ({
+                            ...s,
+                            inBattle: true,
+                            enemyId: enemyCfg.id,
+                            enemyIdx: i
+                        }));
+                    }
+                }
+            }
+            // LEGACY ENEMY COLLISION (ONLY IF NOT DEFEATED) <<<
+            else if (level < 3 && !legacyEnemyDefeated) {
+                const enemyCfg = getLevelConfig(level).enemy;
+                if (enemyCfg && enemy) {
+                    if (
+                        p.x + PLAYER_WIDTH > enemyCfg.x &&
+                        p.x < enemyCfg.x + enemyCfg.w &&
+                        p.y + PLAYER_HEIGHT > enemyCfg.y &&
+                        p.y < enemyCfg.y + enemyCfg.h
+                    ) {
+                        setFightState((s) => ({
+                            ...s,
+                            inBattle: true,
+                            enemyId: "legacy",
+                            enemyIdx: 0
+                        }));
+                    }
+                }
             }
 
             // --- LEVEL COMPLETE ---
-            if (!levelComplete && p.x + PLAYER_WIDTH >= LEVEL_LENGTH - 10) {
+            let level3Done = level !== 3 || (enemyStates["enemy1"] !== "alive" && enemyStates["enemy2"] !== "alive");
+            if (!levelComplete && p.x + PLAYER_WIDTH >= LEVEL_LENGTH - 10 && level3Done) {
                 setLevelComplete(true);
                 const transition = getLevelConfig(level).transitionVideo;
                 if (transition) setPendingTransition(transition);
@@ -598,7 +692,7 @@ const MarioGame: React.FC = () => {
                 ctx.fillText("LEVEL COMPLETE!", GAME_WIDTH / 2 - 200, GAME_HEIGHT / 2);
             } else if (fightState.inBattle && !fightState.fighting) {
                 ctx.fillText(
-                    "Elmar blockiert! [F] Kämpfen  [R] Fliehen",
+                    "Gegner blockiert! [F] Kämpfen  [R] Fliehen",
                     GAME_WIDTH / 2 - 140,
                     GAME_HEIGHT / 2 - 10
                 );
@@ -615,21 +709,7 @@ const MarioGame: React.FC = () => {
 
         requestAnimationFrame(frameLoop);
         return () => { running = false; };
-    }, [loaded, assets, fightState, enemyDefeated, level, levelComplete, showIntro, showLevelTransition]);
-
-    // --- Transition after Level 2 fight ---
-    useEffect(() => {
-        if (
-            level === 2 &&
-            fightState.fighting === false &&
-            fightState.inBattle === false &&
-            enemyDefeated &&
-            !showLevelTransition &&
-            !pendingTransition
-        ) {
-            setLevelComplete(true);
-        }
-    }, [fightState, enemyDefeated, level, showLevelTransition, pendingTransition]);
+    }, [loaded, assets, fightState, enemyStates, legacyEnemyDefeated, level, levelComplete, showIntro, showLevelTransition, showLost]);
 
     // --- TRANSITION VIDEO ---
     if (showLevelTransition && pendingTransition) {
@@ -656,7 +736,8 @@ const MarioGame: React.FC = () => {
                         setShowLevelTransition(false);
                         setLevel(level + 1);
                         setLevelComplete(false);
-                        setEnemyDefeated(false);
+                        setEnemyStates({});
+                        setLegacyEnemyDefeated(false);
                         setPendingTransition(null);
                     }}
                     style={{
@@ -683,12 +764,48 @@ const MarioGame: React.FC = () => {
                         setShowLevelTransition(false);
                         setLevel(level + 1);
                         setLevelComplete(false);
-                        setEnemyDefeated(false);
+                        setEnemyStates({});
+                        setLegacyEnemyDefeated(false);
                         setPendingTransition(null);
                     }}
                 >
                     Skip
                 </button>
+            </div>
+        );
+    }
+
+    // --- LOST SCREEN ---
+    if (showLost) {
+        return (
+            <div style={{
+                width: "100vw",
+                height: "100vh",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                background: "#222"
+            }}>
+                <div style={{ color: "red", fontSize: 48, marginBottom: 24 }}>YOU LOST!</div>
+                <button
+                    style={{
+                        padding: "12px 36px",
+                        fontSize: 32,
+                        borderRadius: 16,
+                        background: "#e8d2b0",
+                        fontWeight: "bold",
+                        border: "none"
+                    }}
+                    onClick={() => {
+                        setShowLost(false);
+                        setLevel(1);
+                        setLevelComplete(false);
+                        setEnemyStates({});
+                        setLegacyEnemyDefeated(false);
+                        setFightState({ inBattle: false, fighting: false, startTime: 0, frame: 0 });
+                    }}
+                >Restart at Level 1</button>
             </div>
         );
     }
@@ -756,7 +873,7 @@ const MarioGame: React.FC = () => {
                 <p style={{ color: "white" }}>
                     ← → to move, ↓ to crouch, Space to jump.<br />
                     Touch spring to jump high, touch water to slow, spikes/rotating = restart.<br />
-                    Elmar: [F] to fight, [R] to run.
+                    Gegner: [F] to fight, [R] to run.
                 </p>
                 {!loaded && <div>Loading sprites...</div>}
             </div>
