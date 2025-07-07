@@ -22,12 +22,13 @@ export const AudioPlayer = () => {
     };
 
     return (
-        <>
+        <div style={{position: "absolute"}}>
             <audio
                 ref={audioRef}
                 src={process.env.PUBLIC_URL + "/music.mp3"}
                 loop
                 preload="auto"
+
             />
             {!started ? (
                 <button
@@ -61,6 +62,6 @@ export const AudioPlayer = () => {
                     >+</button>
                 </div>
             )}
-        </>
+        </div>
     )
 }
