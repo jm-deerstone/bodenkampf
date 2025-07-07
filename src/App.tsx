@@ -693,11 +693,41 @@ const MarioGame: React.FC = () => {
                 ctx.font = "48px Arial";
                 ctx.fillText("LEVEL COMPLETE!", GAME_WIDTH / 2 - 200, GAME_HEIGHT / 2);
             } else if (fightState.inBattle && !fightState.fighting) {
-                ctx.fillText(
-                    "Gegner blockiert! [F] Kämpfen  [R] Fliehen",
-                    GAME_WIDTH / 2 - 140,
-                    GAME_HEIGHT / 2 - 10
-                );
+                let fightMessage = "FIGHT!!!"; // Or use your real message logic
+
+                // Determine enemy position (legacy or multi-enemy)
+                let enemyX = p.x, enemyY = p.y, enemyW = PLAYER_WIDTH, enemyH = PLAYER_HEIGHT;
+                if (level === 3 && assets!.enemyImgs && getLevelConfig(level).enemies && fightState.enemyIdx != null) {
+                    // @ts-ignore
+                    const eCfg = getLevelConfig(level!)!.enemies[fightState.enemyIdx]!;
+                    enemyX = eCfg.x;
+                    enemyY = eCfg.y;
+                    enemyW = eCfg.w;
+                    enemyH = eCfg.h;
+                } else if (level < 3) {
+                    const eCfg = getLevelConfig(level).enemy;
+                    if (eCfg) {
+                        enemyX = eCfg.x;
+                        enemyY = eCfg.y;
+                        enemyW = eCfg.w;
+                        enemyH = eCfg.h;
+                    }
+                }
+
+                // Calculate center X between player and enemy
+                let playerScreenX = p.x - camX + PLAYER_WIDTH / 2;
+                let enemyScreenX = enemyX - camX + enemyW / 2;
+                let centerX = (playerScreenX + enemyScreenX) / 2;
+
+                // Calculate Y above both sprites
+                let topY = Math.min(p.y, enemyY);
+                let messageY = topY - 32; // 32px above
+
+                ctx.font = "24px Arial";
+                ctx.fillStyle = "#fff";
+                ctx.textAlign = "center";
+                ctx.fillText(fightMessage, centerX, messageY);
+                ctx.textAlign = "start"; // Reset to default
             } else {
                 ctx.fillText(
                     `State: ${p.state}  |  X: ${Math.round(p.x)}  Y: ${Math.round(p.y)}`,
@@ -865,17 +895,19 @@ const MarioGame: React.FC = () => {
         }}>
 
             <div>
-                <h2 style={{ color: "white" }}>Mario Level {level} – Configurable!</h2>
+                <h2 style={{color: "white", minHeight: 60, marginBottom: 16, textAlign: "center", lineBreak: "auto", width: "800px"}}>
+                    {getFightMessage(level, fightState) || `Level ${level}`}
+                </h2>
                 <canvas
                     ref={canvasRef}
                     width={GAME_WIDTH}
                     height={GAME_HEIGHT}
-                    style={{ border: "3px solid #222", background: "#e8d2b0" }}
+                    style={{border: "3px solid #222", background: "#e8d2b0"}}
                     tabIndex={0}
                 />
-                <p style={{ color: "white" }}>
-                    ← → to move, ↓ to crouch, Space to jump.<br />
-                    Touch spring to jump high, touch water to slow, spikes/rotating = restart.<br />
+                <p style={{color: "white"}}>
+                    ← → to move, ↓ to crouch, Space to jump.<br/>
+                    Touch spring to jump high, touch water to slow, spikes/rotating = restart.<br/>
                     Gegner: [F] to fight, [R] to run.
                 </p>
                 {!loaded && <div>Loading sprites...</div>}
@@ -883,5 +915,22 @@ const MarioGame: React.FC = () => {
         </div>
     );
 };
+
+function getFightMessage(level: number, fightState: any): string | null {
+    if (!fightState.inBattle || fightState.fighting) return null;
+    if (level === 1) {
+        return "Ihr geratet aneinander, die Gemüter erhitzen Sich! Dein Mitbewohner fordert dich zu einem Bodenkampf heraus! Willst du darauf eingehen?";
+    }
+    if (level === 2) {
+        return "Ihr habt einen Disput. dein Professor wird nicht einlenken! Willst du einen Bodenkampf Ausfechten?";
+    }
+    if (level === 3 && fightState.enemyId === "enemy1") {
+        return "Dein Gegenüber scheint nicht ansprechbar. Willst du einen Bodenkampf Ausfechten?";
+    }
+    if (level === 3 && fightState.enemyId === "enemy2") {
+        return "Dein gegenüber hat viel Frust angestaut und wirkt nicht mehr nüchtern. Willst du einen Bodenkampf riskieren?";
+    }
+    return null;
+}
 
 export default MarioGame;
