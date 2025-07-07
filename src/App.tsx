@@ -231,6 +231,8 @@ const MarioGame: React.FC = () => {
     const [level, setLevel] = useState<number>(1);
     const [levelComplete, setLevelComplete] = useState<boolean>(false);
 
+
+
     const player = useRef<Player>({
         x: 50,
         y: GROUND_Y - PLAYER_HEIGHT + FLOOR_3D_OFFSET + PLAYER_Y_OFFSET,
@@ -861,6 +863,7 @@ const MarioGame: React.FC = () => {
             height: "100vh",
             backgroundColor: "rgb(0,0,0)"
         }}>
+
             <div>
                 <h2 style={{ color: "white" }}>Mario Level {level} – Configurable!</h2>
                 <canvas
